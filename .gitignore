@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+service_account.json
+*.xlsx
