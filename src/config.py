@@ -58,6 +58,10 @@ AI_TIMEOUT = float(os.getenv("AI_TIMEOUT", "30"))
 AI_MAX_RETRIES = int(os.getenv("AI_MAX_RETRIES", "3"))
 AI_RETRY_BACKOFF_SECONDS = float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "2"))
 AI_RESPONSE_FORMAT_JSON = _get_bool("AI_RESPONSE_FORMAT_JSON", True)
+AI_ENRICHMENT_ALERTS_ENABLED = _get_bool("AI_ENRICHMENT_ALERTS_ENABLED", False)
+AI_ENRICHMENT_ALERT_THRESHOLD = float(
+    os.getenv("AI_ENRICHMENT_ALERT_THRESHOLD", "0")
+)
 
 _DEFAULT_SYSTEM_PROMPT = (
     "You are an expert talent researcher helping a job-seeking candidate. "

@@ -6,8 +6,12 @@ from typing import Dict, Iterable, List, Optional
 
 from . import config
 from .providers import load as load_provider
+from .utils.logging import get_logger, log_latency
 
 _REQUIRED_PROVIDER_KEYS = ("module", "result_limit")
+
+
+logger = get_logger(__name__)
 
 
 def _iter_enabled_providers() -> Iterable[tuple[str, Dict[str, object]]]:
@@ -47,10 +51,18 @@ def search_jobs_for_role(
             provider_module = load_provider(settings["module"])
             limit = int(settings.get("result_limit", config.DEFAULT_PROVIDER_LIMIT))
 
+            context = {
+                "provider": provider_name,
+                "location": location,
+                "role": role,
+            }
+
             try:
-                provider_results = provider_module.search(role, location, limit, active_filters)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                print(f"[WARN] Provider {provider_name} failed: {exc}")
+                with log_latency(logger, "provider.search", **context):
+                    provider_results = provider_module.search(
+                        role, location, limit, active_filters
+                    )
+            except Exception:  # pragma: no cover - defensive logging
                 continue
 
             for item in provider_results:
