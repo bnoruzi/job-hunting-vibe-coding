@@ -24,6 +24,11 @@ class SheetsRepository:
         "Source",
         "Link",
     ]
+    ENRICHMENT_KEYS: Tuple[str, ...] = (
+        "ai_fit_score",
+        "ai_summary",
+        "ai_outreach_angle",
+    )
 
     def __init__(self, sheet: "Worksheet") -> None:
         self.sheet = sheet
@@ -32,6 +37,7 @@ class SheetsRepository:
         self.rows_by_link: Dict[str, Tuple[int, List[Any]]] = {}
         self.row_count: int = 0
         self._initialize()
+        self._ensure_dynamic_keys(self.ENRICHMENT_KEYS)
 
     # ------------------------------------------------------------------
     # Public API

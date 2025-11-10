@@ -8,6 +8,7 @@ from .roles_loader import load_roles
 from .job_search import search_jobs_for_role
 from .storage.sheets_repository import SheetsRepository
 from . import config
+from .ai import EnrichmentError, enrich_job
 
 _DATE_POSTED_OPTIONS: List[Tuple[str, str, str]] = [
     ("1", "any", "Any time"),
@@ -117,6 +118,16 @@ def _run_once(locations: List[str], filters: Dict[str, str]) -> None:
             link = item.get("link")
             if not link:
                 continue
+
+            enrichment_payload = item.get("enrichment")
+            if config.AI_ENRICHMENT_ENABLED and not enrichment_payload:
+                try:
+                    enrichment_payload = enrich_job(item)
+                except EnrichmentError as exc:
+                    print(f"[WARN] Failed to enrich job {link}: {exc}")
+                else:
+                    if enrichment_payload:
+                        item["enrichment"] = enrichment_payload
 
             was_created = repository.upsert_job(
                 fetched_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
