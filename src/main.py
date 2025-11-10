@@ -1,12 +1,13 @@
+import argparse
+import time
 from datetime import datetime
 from typing import Dict, List, Tuple
 
 from .google_sheet import get_sheet
 from .roles_loader import load_roles
 from .job_search import search_jobs_for_role
+from .storage.sheets_repository import SheetsRepository
 from . import config
-
-BASE_HEADER = ["Fetched At (UTC)", "Role", "Job Title", "Source", "Link"]
 
 _DATE_POSTED_OPTIONS: List[Tuple[str, str, str]] = [
     ("1", "any", "Any time"),
@@ -22,32 +23,6 @@ _JOB_TYPE_OPTIONS: List[Tuple[str, str, str]] = [
     ("4", "contract", "Contract"),
     ("5", "internship", "Internship"),
 ]
-
-
-def _header_to_key(header: str) -> str:
-    return header.lower().replace(" ", "_")
-
-
-def _key_to_header(key: str) -> str:
-    return key.replace("_", " ").title()
-
-
-def _prepare_header(existing_header: List[str]) -> List[str]:
-    if not existing_header:
-        return BASE_HEADER.copy()
-    return list(existing_header)
-
-
-def _extract_metadata_keys(header: List[str]) -> List[str]:
-    metadata_keys: List[str] = []
-    for column in header:
-        if column not in BASE_HEADER:
-            metadata_keys.append(_header_to_key(column))
-    return metadata_keys
-
-
-def _ensure_header(sheet, header: List[str]):
-    sheet.update("A1", [header])
 
 
 def _prompt_locations() -> List[str]:
@@ -76,7 +51,16 @@ def _prompt_choice(options: List[Tuple[str, str, str]], title: str, default_key:
     return mapping[choice]
 
 
-def _collect_filters() -> Tuple[List[str], Dict[str, str]]:
+def _collect_filters(interactive: bool) -> Tuple[List[str], Dict[str, str]]:
+    if not interactive:
+        locations = [config.LOCATION]
+        filters: Dict[str, str] = {}
+        print("Using default filters (non-interactive mode).")
+        print(f"  Locations: {', '.join(locations)}")
+        print("  Date posted: Any time")
+        print("  Job type: Any")
+        return locations, filters
+
     print("Configure dynamic filters (press Enter to accept defaults).")
     locations = _prompt_locations()
     date_choice = _prompt_choice(
@@ -117,65 +101,76 @@ def _collect_filters() -> Tuple[List[str], Dict[str, str]]:
     return locations, filters
 
 
-def main():
+def _run_once(locations: List[str], filters: Dict[str, str]) -> None:
     sheet = get_sheet()
+    repository = SheetsRepository(sheet)
     roles = load_roles()
-    locations, filters = _collect_filters()
-
-    existing = sheet.get_all_values()
-    header = _prepare_header(existing[0] if existing else [])
-    metadata_keys = _extract_metadata_keys(header)
-
-    if not existing:
-        _ensure_header(sheet, header)
-
-    existing_links = set()
-    if existing:
-        link_idx = header.index("Link") if "Link" in header else -1
-        if link_idx >= 0:
-            for row in existing[1:]:
-                if len(row) > link_idx and row[link_idx]:
-                    existing_links.add(row[link_idx])
 
     for role in roles:
         results = search_jobs_for_role(role, locations, filters)
-
-        # discover new metadata keys before writing rows
-        updated_header = False
-        for item in results:
-            metadata = item.get("metadata", {})
-            for key in metadata:
-                if key not in metadata_keys:
-                    metadata_keys.append(key)
-                    header.append(_key_to_header(key))
-                    updated_header = True
-        if updated_header:
-            _ensure_header(sheet, header)
 
         added = 0
         for item in results:
             if added >= config.MAX_RESULTS_PER_ROLE:
                 break
+
             link = item.get("link")
-            if not link or link in existing_links:
+            if not link:
                 continue
 
-            metadata = item.get("metadata", {})
-            row = [
-                datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                role,
-                item.get("title"),
-                item.get("source"),
-                link,
-            ]
-            for key in metadata_keys:
-                row.append(metadata.get(key, ""))
+            was_created = repository.upsert_job(
+                fetched_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                role=role,
+                title=item.get("title"),
+                source=item.get("source"),
+                link=link,
+                metadata=item.get("metadata", {}),
+                enrichment=item.get("enrichment"),
+            )
 
-            sheet.append_row(row)
-            existing_links.add(link)
-            added += 1
+            if was_created:
+                added += 1
 
         print(f"Processed role: {role} (added {added} jobs)")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Fetch job listings and persist them.")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without prompts, using default configuration values.",
+    )
+    parser.add_argument(
+        "--schedule-minutes",
+        type=int,
+        help="Run continuously, fetching jobs every N minutes.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = _parse_args()
+    schedule_minutes = args.schedule_minutes
+    non_interactive = args.non_interactive or schedule_minutes is not None
+
+    locations, filters = _collect_filters(interactive=not non_interactive)
+
+    if schedule_minutes is not None:
+        interval = max(schedule_minutes, 1)
+        print(
+            f"Starting periodic fetch every {interval} minute(s). Press Ctrl+C to exit."
+        )
+        try:
+            while True:
+                _run_once(locations, filters)
+                print(f"Sleeping for {interval} minute(s)...")
+                time.sleep(interval * 60)
+        except KeyboardInterrupt:
+            print("Stopping periodic fetch.")
+        return
+
+    _run_once(locations, filters)
 
 
 if __name__ == "__main__":
