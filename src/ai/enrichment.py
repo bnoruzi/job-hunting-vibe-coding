@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
@@ -11,8 +10,10 @@ from typing import Any, Dict, Mapping, Optional
 import requests
 
 from .. import config
+from ..utils.logging import get_logger, log_latency
+from ..utils import notifications
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EnrichmentError(RuntimeError):
@@ -166,24 +167,31 @@ def enrich_job(posting: Mapping[str, Any]) -> Dict[str, Any]:
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
-            response.raise_for_status()
-            data = response.json()
-            choices = data.get("choices")
-            if not choices:
-                raise ValueError("AI response missing choices array")
-            message = choices[0].get("message", {})
-            content = message.get("content")
-            if not isinstance(content, str):
-                raise ValueError("AI response content is not text")
-            parsed = _parse_response_content(content)
-            normalized = _normalize_result(parsed)
+            with log_latency(
+                logger,
+                "ai.enrichment",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                provider=config.AI_PROVIDER,
+            ):
+                response = requests.post(
+                    url, headers=headers, json=payload, timeout=timeout
+                )
+                response.raise_for_status()
+                data = response.json()
+                choices = data.get("choices")
+                if not choices:
+                    raise ValueError("AI response missing choices array")
+                message = choices[0].get("message", {})
+                content = message.get("content")
+                if not isinstance(content, str):
+                    raise ValueError("AI response content is not text")
+                parsed = _parse_response_content(content)
+                normalized = _normalize_result(parsed)
+            _maybe_notify_high_score(posting, normalized)
             return normalized
         except (requests.RequestException, ValueError, KeyError) as exc:
             last_error = exc
-            logger.warning(
-                "AI enrichment attempt %s/%s failed: %s", attempt, max_attempts, exc
-            )
             if attempt < max_attempts:
                 time.sleep(config.AI_RETRY_BACKOFF_SECONDS)
                 continue
@@ -193,3 +201,25 @@ def enrich_job(posting: Mapping[str, Any]) -> Dict[str, Any]:
         str(last_error) if last_error else "Unknown AI enrichment failure"
     )
     raise EnrichmentError(error_message)
+
+
+def _maybe_notify_high_score(posting: Mapping[str, Any], enrichment: Mapping[str, Any]) -> None:
+    if not getattr(config, "AI_ENRICHMENT_ALERTS_ENABLED", False):
+        return
+
+    threshold = getattr(config, "AI_ENRICHMENT_ALERT_THRESHOLD", 0)
+    if not threshold:
+        return
+
+    raw_score = enrichment.get("ai_fit_score")
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError):
+        return
+
+    if score >= float(threshold):
+        notifications.send_high_score_alert(
+            score=score,
+            posting=posting,
+            enrichment=enrichment,
+        )

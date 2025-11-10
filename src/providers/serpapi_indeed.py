@@ -5,6 +5,9 @@ from __future__ import annotations
 import requests
 
 from .. import config
+from ..utils.logging import get_logger, log_latency
+
+logger = get_logger(__name__)
 
 _SERP_API_ENDPOINT = "https://serpapi.com/search.json"
 
@@ -61,9 +64,16 @@ def search(role: str, location: str, limit: int, filters: dict[str, object] | No
         params["num"] = limit
 
     timeout = settings.get("timeout", config.PROVIDER_REQUEST_TIMEOUT)
-    response = requests.get(_SERP_API_ENDPOINT, params=params, timeout=timeout)
-    response.raise_for_status()
-    payload = response.json()
+    with log_latency(
+        logger,
+        "serpapi.request",
+        provider="serpapi_indeed",
+        role=role,
+        location=location,
+    ):
+        response = requests.get(_SERP_API_ENDPOINT, params=params, timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
 
     results = []
     for item in payload.get("organic_results", []):
