@@ -1,5 +1,6 @@
+import json
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 
@@ -38,4 +39,68 @@ PROVIDER_SETTINGS: Dict[str, Dict[str, Any]] = {
         "module": "providers.serpapi_indeed",
         "label": os.getenv("PROVIDER_SERPAPI_INDEED_LABEL", "Indeed (SerpAPI)"),
     },
+}
+
+
+# ---------------------------------------------------------------------------
+# AI enrichment configuration
+# ---------------------------------------------------------------------------
+
+AI_ENRICHMENT_ENABLED = _get_bool("AI_ENRICHMENT_ENABLED", False)
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai")
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
+AI_API_KEY = os.getenv("AI_API_KEY")
+AI_ORG = os.getenv("AI_ORG")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+AI_COMPLETIONS_URL = os.getenv("AI_COMPLETIONS_URL")
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
+AI_TIMEOUT = float(os.getenv("AI_TIMEOUT", "30"))
+AI_MAX_RETRIES = int(os.getenv("AI_MAX_RETRIES", "3"))
+AI_RETRY_BACKOFF_SECONDS = float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "2"))
+AI_RESPONSE_FORMAT_JSON = _get_bool("AI_RESPONSE_FORMAT_JSON", True)
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an expert talent researcher helping a job-seeking candidate. "
+    "Return concise JSON with insights tailored to the candidate profile."
+)
+_DEFAULT_USER_PROMPT = (
+    "You are supporting a candidate with the following profile: {candidate_profile}.\n\n"
+    "Evaluate this job posting and respond in strict JSON with keys 'fit_score', "
+    "'summary', and 'outreach_angle'.\n\n"
+    "Job Title: {job_title}\n"
+    "Company: {company}\n"
+    "Location: {location}\n"
+    "Link: {link}\n"
+    "Description: {description}\n\n"
+    "Return fit_score as a number from 0-100 summarizing overall fit, summary as a "
+    "two-sentence overview referencing skills and requirements, and outreach_angle "
+    "with a suggestion for how the candidate should position themselves when "
+    "reaching out."
+)
+_DEFAULT_CANDIDATE_PROFILE = (
+    "Senior full-stack software engineer specializing in Python, cloud platforms, "
+    "and AI-driven products. Interested in impactful, collaborative teams."
+)
+
+
+def _load_prompt_template(env_name: str, default: str) -> str:
+    raw = os.getenv(env_name)
+    if not raw:
+        return default
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+        return str(data.get("template", default))
+    return raw
+
+
+AI_PROMPT_TEMPLATES: Dict[str, str] = {
+    "system": _load_prompt_template("AI_SYSTEM_PROMPT", _DEFAULT_SYSTEM_PROMPT),
+    "user": _load_prompt_template("AI_USER_PROMPT", _DEFAULT_USER_PROMPT),
+    "candidate_profile": os.getenv(
+        "AI_CANDIDATE_PROFILE", _DEFAULT_CANDIDATE_PROFILE
+    ),
 }
